@@ -872,6 +872,10 @@ class Dataset(Dataset):
     def __getitem__(self, index):
         path = self.paths[index]
         img = Image.open(path)
+        # # TODO this is a placeholder for actual depth information:
+        # # create grayscale image:
+        # gray_image = img.convert('L')
+        # img.putalpha(gray_image)
         return self.transform(img)
 
 # trainer class

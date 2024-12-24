@@ -659,22 +659,26 @@ class GaussianDiffusion(Module):
         model_mean, posterior_variance, posterior_log_variance = self.q_posterior(x_start = x_start, x_t = x, t = t)
         return model_mean, posterior_variance, posterior_log_variance, x_start
 
+    @staticmethod
+    @torch.inference_mode()
+    def restore_rbg_channels(img, gt):
+        img[:, 0:3, :, :] = gt[:, 0:3, :, :]
+        return img
+
     @torch.inference_mode()
     def p_sample(self, x, t: int, x_self_cond = None, gt=None, mask=None):
-
         # https://arxiv.org/abs/2201.09865
-
         if mask is not None:
             mask = mask.to(x.device)
             gt = normalize_to_neg_one_to_one(gt)
+            # x = self.restore_rbg_channels(x, gt)
             alpha_cumnprod_t = self.alphas_cumprod[t]
-            gt_weight = torch.sqrt(alpha_cumnprod_t).to(x.device) 
+            gt_weight = torch.sqrt(alpha_cumnprod_t).to(x.device)
             gt_part = gt_weight * gt
             noise_weight = torch.sqrt(1 - alpha_cumnprod_t).to(x.device)
             noise_part = noise_weight * torch.randn_like(x,device=x.device)
             weighed_gt = gt_part + noise_part
-            x = (mask * weighed_gt) + ((1 - mask) * x)
-
+            x = self.apply_mask(mask, weighed_gt, x)
         b, *_, device = *x.shape, self.device
         batched_times = torch.full((b,), t, device = device, dtype = torch.long)
         model_mean, _, model_log_variance, x_start = self.p_mean_variance(
@@ -685,9 +689,22 @@ class GaussianDiffusion(Module):
 
         if t==0 and mask is not None:
             # if t == 0, we use the ground-truth image if in-painting
-            pred_img = (mask * gt) +  ((1 - mask) * pred_img)
+            pred_img = self.apply_mask(mask, gt, pred_img)
+            # pred_img = self.restore_rbg_channels(pred_img, gt)
 
         return pred_img, x_start
+
+    @staticmethod
+    @torch.inference_mode()
+    def apply_mask(mask, gt, pred_img):
+        # TODO Apply mask only to depth
+        # copy gt to new prediction
+        expanded_mask = torch.ones_like(gt)
+        for i in range(mask.shape[0]):
+            expanded_mask[i, 3] = mask[i]
+        # full_prediction = (mask * gt) + ((1 - mask) * pred_img)
+        full_prediction = (expanded_mask * gt) + ((1 - expanded_mask) * pred_img)
+        return full_prediction
 
     @torch.inference_mode()
     def p_sample_loop(
@@ -911,6 +928,10 @@ class Dataset(Dataset):
     def __getitem__(self, index):
         path = self.paths[index]
         img = Image.open(path)
+        # # TODO this is a placeholder for actual depth information:
+        # # create grayscale image:
+        gray_image = img.convert('L')
+        img.putalpha(gray_image)
         return self.transform(img)
 
 # trainer class
