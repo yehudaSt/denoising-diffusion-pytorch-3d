@@ -30,7 +30,7 @@ from accelerate import Accelerator
 from denoising_diffusion_pytorch.attend import Attend
 from denoising_diffusion_pytorch.fid_evaluation import FIDEvaluation
 from denoising_diffusion_pytorch.inpainting.utils import rescale_depth_to_pixel, get_item, crop_corner_v2, \
-    crop_corner_u2, crop_corner_v1, crop_corner_u1
+    crop_corner_u2, crop_corner_v1, crop_corner_u1, depth_min, depth_max
 
 from denoising_diffusion_pytorch.version import __version__
 
@@ -934,7 +934,7 @@ class Dataset(Dataset):
         cropped_img = img.crop(box=(crop_corner_u1, crop_corner_v1, crop_corner_u2, crop_corner_v2))
         depth = np.load(path.replace('color', 'depth').replace('png', 'npy'))
         depth = depth[crop_corner_v1:crop_corner_v2, crop_corner_u1:crop_corner_u2]
-        depth = (depth - depth.min()) / (depth.max() - depth.min()) * 255
+        depth = (depth - depth_min) / (depth_max - depth_min) * 255
         depth = depth.astype(np.uint8)
         depth = Image.fromarray(depth)
         cropped_img.putalpha(depth)

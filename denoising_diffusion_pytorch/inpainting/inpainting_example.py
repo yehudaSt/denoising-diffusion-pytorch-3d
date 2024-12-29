@@ -7,7 +7,7 @@ import numpy as np
 import torch
 from denoising_diffusion_pytorch import Unet
 from denoising_diffusion_pytorch.inpainting.utils import rescale_depth_to_pixel, rescale_pixel_to_depth, get_item, \
-    crop_corner_u1, crop_corner_v1, crop_corner_u2, crop_corner_v2
+    crop_corner_u1, crop_corner_v1, crop_corner_u2, crop_corner_v2, depth_max, depth_min
 from denoising_diffusion_pytorch.repaint import GaussianDiffusion as RePaint
 from PIL import Image
 from torch.utils.data import DataLoader
@@ -36,7 +36,7 @@ class FFHQDataset(VisionDataset):
         cropped_img = pil_to_tensor(cropped_img) / 255.0
         depth = np.load(fpath.replace('color', 'depth').replace('png', 'npy'))
         depth = depth[crop_corner_v1:crop_corner_v2, crop_corner_u1:crop_corner_u2]
-        depth = (depth - depth.min()) / (depth.max() - depth.min())
+        depth = (depth - depth_min) / (depth_max - depth_min)
         depth_resized = cv2.resize(depth, (size, size))
         depth_resized = torch.tensor(depth_resized, dtype=torch.float32)
         four_d_img = torch.cat((cropped_img, depth_resized.unsqueeze(0)), dim=0)
@@ -60,6 +60,23 @@ def create_middle_column_mask(image_size, mask_size: int):
     end = start + mask_size
     mask[:, start:end] = 1
     return (mask - 1) * -1
+
+def save_output_images(inpainted_imgs, original_imgs):
+    for idx, (img, original_img) in enumerate(zip(inpainted_imgs, original_imgs)):
+        o_img = original_img.numpy().transpose(1, 2, 0).astype(np.float32)
+        img = img.cpu().numpy().transpose(1, 2, 0)
+        color = img[:, :, 0:3] * 255
+        depth = img[:, :, 3]
+        # depth_mm = rescale_pixel_to_depth(depth)
+        # img = rescale_pixel_to_depth(img)
+        cv2.imwrite(f"inpainted_image_{idx}.png", cv2.cvtColor(color, cv2.COLOR_RGB2BGR))
+        # depth = rescale_pixel_to_depth(o_img[:, :, 3])
+
+        np.save(f"inpainted_depth_{idx}.npy", depth)
+        np.save(f"original_depth_{idx}.npy", o_img[:, :, 3])
+
+        cv2.imwrite(f"inpainted_depth_{idx}.png", depth)
+
 
 
 def plot_results(target, masked_gt, mask, inpainted, dir):
@@ -112,6 +129,7 @@ def plot_results(target, masked_gt, mask, inpainted, dir):
 
     fig.savefig(os.path.join(dir, "inpainted_image.png"))
 
+
 def main():
 
     model = Unet(dim=64, dim_mults=(1, 2, 4, 8), channels=4) # dim_mults=(1, 2, 4, 8, 16, 32), flash_attn=True)
@@ -159,9 +177,8 @@ def main():
     # generate inpainting
     inpainted = diffusion.sample(gt=masked_imgs, mask=masks)
     # min-max normalization for plotting
+    save_output_images(inpainted, imgs.to("cpu"))
     inpainted = (inpainted - inpainted.min()) / (inpainted.max() - inpainted.min())
-
-
     plot_results(imgs.to("cpu"), masked_imgs.to("cpu"), masks.to("cpu"), inpainted.to("cpu"), dir=os.path.dirname(ckpt_path))
 
 if __name__ == "__main__":

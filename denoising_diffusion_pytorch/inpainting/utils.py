@@ -14,6 +14,9 @@ crop_corner_v1 = 250
 crop_corner_u2 = 1560
 crop_corner_v2 = 930
 
+depth_min = 0
+depth_max = 2000
+
 def rescale_depth_to_pixel(depth: np.ndarray):
     """Rescale depth image to be between 0 and 255"""
 
@@ -23,10 +26,15 @@ def rescale_depth_to_pixel(depth: np.ndarray):
     depth = (depth - min_pixel_value) / depth_range * max_pixel_value
     return depth.astype('uint8')
 
+# def rescale_pixel_to_depth(pixel: np.ndarray):
+#     """Rescale pixel image to be between 0 and 2000 mm"""
+#
+#     return pixel / max_pixel_value * depth_range + min_pixel_value
+
 def rescale_pixel_to_depth(pixel: np.ndarray):
     """Rescale pixel image to be between 0 and 2000 mm"""
-
-    return pixel / max_pixel_value * depth_range + min_pixel_value
+    d_range = depth_max - depth_min
+    return pixel * d_range + depth_min
 
 def get_item(path: str):
     u1 = 290
