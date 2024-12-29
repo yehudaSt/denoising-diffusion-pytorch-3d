@@ -1,10 +1,13 @@
 
 from glob import glob
 import os
-
+import cv2
 import matplotlib.pyplot as plt
+import numpy as np
 import torch
 from denoising_diffusion_pytorch import Unet
+from denoising_diffusion_pytorch.inpainting.utils import rescale_depth_to_pixel, rescale_pixel_to_depth, get_item, \
+    crop_corner_u1, crop_corner_v1, crop_corner_u2, crop_corner_v2
 from denoising_diffusion_pytorch.repaint import GaussianDiffusion as RePaint
 from PIL import Image
 from torch.utils.data import DataLoader
@@ -14,8 +17,9 @@ from torchvision.transforms.functional import pil_to_tensor
 
 # Taken from: https://github.com/lucidrains/denoising-diffusion-pytorch/issues/317
 class FFHQDataset(VisionDataset):
-    def __init__(self, root: str):
+    def __init__(self, root: str, image_size: int):
         super().__init__(root)
+        self.image_size = image_size
 
         self.fpaths = sorted(glob(root + "/*.png", recursive=True))
         assert len(self.fpaths) > 0, "File list is empty. Check the root."
@@ -25,15 +29,18 @@ class FFHQDataset(VisionDataset):
 
     def __getitem__(self, index: int):
         fpath = self.fpaths[index]
+        size = (128)
         img = Image.open(fpath).convert("RGB")
-        # todo: keep aspect ratio:
-        img = img.resize((128, 128))
-        # todo: use depth instead of alpha and normalize it to [0, 1]
-        gray_img = img.convert("L")
-        img.putalpha(gray_img)
-        # normalize to [0, 1] range
-        img = pil_to_tensor(img) / 255.0
-        return img
+        cropped_img = img.crop(box=(crop_corner_u1, crop_corner_v1, crop_corner_u2, crop_corner_v2))
+        cropped_img = cropped_img.resize((size, size))
+        cropped_img = pil_to_tensor(cropped_img) / 255.0
+        depth = np.load(fpath.replace('color', 'depth').replace('png', 'npy'))
+        depth = depth[crop_corner_v1:crop_corner_v2, crop_corner_u1:crop_corner_u2]
+        depth = (depth - depth.min()) / (depth.max() - depth.min())
+        depth_resized = cv2.resize(depth, (size, size))
+        depth_resized = torch.tensor(depth_resized, dtype=torch.float32)
+        four_d_img = torch.cat((cropped_img, depth_resized.unsqueeze(0)), dim=0)
+        return four_d_img
 
 
 def create_center_square_mask(image_size: int, mask_size: int):
@@ -68,7 +75,7 @@ def plot_results(target, masked_gt, mask, inpainted, dir):
     fig, axs = plt.subplots(batch_size, 6, figsize=(30, 5 * batch_size))
 
     for i in range(batch_size):
-        target_np = target[i].numpy().transpose(1, 2, 0)
+        target_np = target[i].numpy().transpose(1, 2, 0).astype(np.float32)
         masked_gt_np = masked_gt[i].numpy().transpose(1, 2, 0)
         mask_np = mask[i].numpy().transpose(1, 2, 0)
         inpainted_np = inpainted[i].numpy().transpose(1, 2, 0)
@@ -78,16 +85,16 @@ def plot_results(target, masked_gt, mask, inpainted, dir):
         axs[i, 0].imshow(target_np[:, :, 0:3])
         axs[i, 0].axis("off")
 
-        axs[i, 1].imshow(target_np[:, :, 3], cmap="gray")
+        axs[i, 1].imshow(rescale_pixel_to_depth(target_np[:, :, 3]), cmap="gray")
         axs[i, 1].axis("off")
 
-        axs[i, 2].imshow(masked_gt_np[:, :, 3], cmap="gray")
+        axs[i, 2].imshow(rescale_pixel_to_depth(masked_gt_np[:, :, 3]), cmap="gray")
         axs[i, 2].axis("off")
 
         axs[i, 3].imshow(mask_np, cmap="gray")
         axs[i, 3].axis("off")
 
-        axs[i, 4].imshow(inpainted_np[:, :, 3], cmap="gray") # plot gray image (i.e. depth)
+        axs[i, 4].imshow(rescale_pixel_to_depth(inpainted_np[:, :, 3]), cmap="gray") # plot gray image (i.e. depth)
         axs[i, 4].axis("off")
 
         axs[i, 5].imshow(inpainted_np[:, :, 0:3]) # plot gray image (i.e. depth)
@@ -114,13 +121,14 @@ def main():
     )
 
     # pretrained model on FFHQ
-    ckpt_path = "/home/onesh/repos/denoising-diffusion-pytorch/denoising_diffusion_pytorch/training/results/model-final_1000_3d.pt"
+    ckpt_path = "/home/onesh/repos/denoising-diffusion-pytorch/denoising_diffusion_pytorch/training/results/model-4d_final.pt"
     diffusion.load_state_dict(torch.load(ckpt_path)["model"])
 
 
     # batch from dataloader
     ds = FFHQDataset(
-        root="/home/onesh/data/dividers"
+        root="/home/onesh/data/many_tote_images/verified_tote_images",
+        image_size=128
     )
     dl = DataLoader(ds, batch_size=5, shuffle=True)
     imgs = next(iter(dl))

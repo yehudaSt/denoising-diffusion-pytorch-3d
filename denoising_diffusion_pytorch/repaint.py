@@ -5,7 +5,7 @@ from random import random
 from functools import partial
 from collections import namedtuple
 from multiprocessing import cpu_count
-
+import numpy as np
 import torch
 from torch import nn, einsum
 import torch.nn.functional as F
@@ -23,11 +23,14 @@ from einops.layers.torch import Rearrange
 from PIL import Image
 from tqdm.auto import tqdm
 from ema_pytorch import EMA
+from torchvision.transforms.functional import pil_to_tensor
 
 from accelerate import Accelerator
 
 from denoising_diffusion_pytorch.attend import Attend
 from denoising_diffusion_pytorch.fid_evaluation import FIDEvaluation
+from denoising_diffusion_pytorch.inpainting.utils import rescale_depth_to_pixel, get_item, crop_corner_v2, \
+    crop_corner_u2, crop_corner_v1, crop_corner_u1
 
 from denoising_diffusion_pytorch.version import __version__
 
@@ -926,13 +929,17 @@ class Dataset(Dataset):
         return len(self.paths)
 
     def __getitem__(self, index):
-        path = self.paths[index]
+        path = str(self.paths[index])
         img = Image.open(path)
-        # # TODO this is a placeholder for actual depth information:
-        # # create grayscale image:
-        gray_image = img.convert('L')
-        img.putalpha(gray_image)
-        return self.transform(img)
+        cropped_img = img.crop(box=(crop_corner_u1, crop_corner_v1, crop_corner_u2, crop_corner_v2))
+        depth = np.load(path.replace('color', 'depth').replace('png', 'npy'))
+        depth = depth[crop_corner_v1:crop_corner_v2, crop_corner_u1:crop_corner_u2]
+        depth = (depth - depth.min()) / (depth.max() - depth.min()) * 255
+        depth = depth.astype(np.uint8)
+        depth = Image.fromarray(depth)
+        cropped_img.putalpha(depth)
+        return self.transform(cropped_img)
+
 
 # trainer class
 
@@ -1159,3 +1166,4 @@ class Trainer:
                 pbar.update(1)
 
         accelerator.print('training complete')
+
